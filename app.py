@@ -7,16 +7,13 @@ import streamlit as st
 import time
 import math
 import re
-import json
 import random
-import string
-from collections import defaultdict, Counter
+from collections import defaultdict
 from io import StringIO
 
 import nltk
 import pandas as pd
 
-# Download NLTK resources quietly
 for resource in ['punkt', 'stopwords', 'wordnet', 'averaged_perceptron_tagger', 'punkt_tab']:
     try:
         nltk.download(resource, quiet=True)
@@ -28,7 +25,7 @@ from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer, WordNetLemmatizer
 
 # ─────────────────────────────────────────────────────────
-# Utility helpers
+# Preprocessing
 # ─────────────────────────────────────────────────────────
 
 STOP_WORDS = set(stopwords.words('english'))
@@ -38,34 +35,27 @@ lemmatizer = WordNetLemmatizer()
 
 def preprocess(text, lowercase=True, remove_stops=True, handle_hyphens=True,
                stem=False, lemmatize=False):
-    """Full preprocessing pipeline; returns tokens and intermediate stages."""
     stages = {"original": text}
 
-    # Hyphen handling: replace hyphens with space
     if handle_hyphens:
         text = re.sub(r'-', ' ', text)
     stages["hyphen_handled"] = text
 
-    # Lowercase
     if lowercase:
         text = text.lower()
     stages["lowercased"] = text
 
-    # Tokenize
     tokens = word_tokenize(text)
     stages["tokenized"] = tokens
 
-    # Remove non-alpha tokens and stop words
     tokens = [t for t in tokens if t.isalpha()]
     if remove_stops:
         tokens = [t for t in tokens if t not in STOP_WORDS]
     stages["stop_removed"] = tokens
 
-    # Stem
     stemmed = [stemmer.stem(t) for t in tokens]
     stages["stemmed"] = stemmed
 
-    # Lemmatize
     lemmatized = [lemmatizer.lemmatize(t) for t in tokens]
     stages["lemmatized"] = lemmatized
 
@@ -73,12 +63,10 @@ def preprocess(text, lowercase=True, remove_stops=True, handle_hyphens=True,
         return stemmed, stages
     elif lemmatize:
         return lemmatized, stages
-    else:
-        return tokens, stages
+    return tokens, stages
 
 
 def build_inverted_index(docs):
-    """Build inverted index: term -> {doc_id: [positions]}."""
     index = defaultdict(lambda: defaultdict(list))
     for doc_id, text in enumerate(docs):
         tokens, _ = preprocess(text)
@@ -88,11 +76,10 @@ def build_inverted_index(docs):
 
 
 # ─────────────────────────────────────────────────────────
-# Phrase Query: Biword and Positional Index
+# Phrase Query
 # ─────────────────────────────────────────────────────────
 
 def build_biword_index(docs):
-    """Build biword index: biword -> set of doc_ids."""
     index = defaultdict(set)
     for doc_id, text in enumerate(docs):
         tokens, _ = preprocess(text)
@@ -103,12 +90,10 @@ def build_biword_index(docs):
 
 
 def build_positional_index(docs):
-    """Build positional index: term -> {doc_id: [positions]}."""
     return build_inverted_index(docs)
 
 
 def biword_phrase_search(query, biword_index, docs):
-    """Search using biword index."""
     query_tokens, _ = preprocess(query)
     if len(query_tokens) < 2:
         return list(biword_index.get(query_tokens[0], set())) if query_tokens else []
@@ -127,12 +112,10 @@ def biword_phrase_search(query, biword_index, docs):
 
 
 def positional_phrase_search(query, positional_index, docs):
-    """Search using positional index for exact phrase."""
     query_tokens, _ = preprocess(query)
     if not query_tokens:
         return []
 
-    # Get candidate docs from first term
     candidates = positional_index.get(query_tokens[0], {})
     result = set(candidates.keys())
 
@@ -140,7 +123,6 @@ def positional_phrase_search(query, positional_index, docs):
         term_postings = positional_index.get(term, {})
         result = result & set(term_postings.keys())
 
-    # Verify consecutive positions
     final = []
     for doc_id in sorted(result):
         first_positions = positional_index.get(query_tokens[0], {}).get(doc_id, [])
@@ -161,7 +143,7 @@ def positional_phrase_search(query, positional_index, docs):
 
 
 # ─────────────────────────────────────────────────────────
-# Binary Search Tree
+# Binary Search Tree (fully iterative — avoids RecursionError)
 # ─────────────────────────────────────────────────────────
 
 class BSTNode:
@@ -179,31 +161,36 @@ class BST:
         self.comparisons = 0
 
     def insert(self, key):
-        self.root = self._insert(self.root, key)
-
-    def _insert(self, node, key):
-        if node is None:
-            return BSTNode(key)
-        if key < node.key:
-            node.left = self._insert(node.left, key)
-        elif key > node.key:
-            node.right = self._insert(node.right, key)
-        return node
+        if self.root is None:
+            self.root = BSTNode(key)
+            return
+        node = self.root
+        while True:
+            if key < node.key:
+                if node.left is None:
+                    node.left = BSTNode(key)
+                    return
+                node = node.left
+            elif key > node.key:
+                if node.right is None:
+                    node.right = BSTNode(key)
+                    return
+                node = node.right
+            else:
+                return  # duplicate
 
     def search(self, key):
         self.comparisons = 0
-        return self._search(self.root, key)
-
-    def _search(self, node, key):
-        if node is None:
-            return False
-        self.comparisons += 1
-        if key == node.key:
-            return True
-        elif key < node.key:
-            return self._search(node.left, key)
-        else:
-            return self._search(node.right, key)
+        node = self.root
+        while node is not None:
+            self.comparisons += 1
+            if key == node.key:
+                return True
+            elif key < node.key:
+                node = node.left
+            else:
+                node = node.right
+        return False
 
 
 # ─────────────────────────────────────────────────────────
@@ -212,11 +199,10 @@ class BST:
 
 class BTreeNode:
     def __init__(self, t, leaf=True):
-        self.t = t          # minimum degree
+        self.t = t
         self.keys = []
         self.children = []
         self.leaf = leaf
-        self.comparisons = 0
 
     def is_full(self):
         return len(self.keys) == 2 * self.t - 1
@@ -289,7 +275,6 @@ class BTree:
 # ─────────────────────────────────────────────────────────
 
 def build_kgram_index(vocabulary, k=2):
-    """Build k-gram index: k-gram -> set of terms."""
     index = defaultdict(set)
     for term in vocabulary:
         padded = f"${term}$"
@@ -300,9 +285,8 @@ def build_kgram_index(vocabulary, k=2):
 
 
 def wildcard_search(pattern, kgram_index, vocabulary, k=2):
-    """Wildcard query using k-gram index."""
     parts = pattern.split('*')
-    parts = [p for p in parts if p]  # remove empty strings
+    parts = [p for p in parts if p]
 
     if not parts:
         return list(vocabulary)
@@ -327,14 +311,11 @@ def wildcard_search(pattern, kgram_index, vocabulary, k=2):
         return []
 
     candidates = set.intersection(*candidate_sets)
-
-    # Post-filter: verify actual pattern match
     regex = re.compile('^' + pattern.replace('*', '.*') + '$')
     return sorted([t for t in candidates if regex.match(t)])
 
 
 def edit_distance(s1, s2):
-    """Compute Levenshtein edit distance."""
     m, n = len(s1), len(s2)
     dp = list(range(n + 1))
     for i in range(1, m + 1):
@@ -351,7 +332,6 @@ def edit_distance(s1, s2):
 
 
 def spell_correct(word, vocabulary, max_dist=2):
-    """Return closest vocabulary terms within max_dist edit distance."""
     candidates = []
     for term in vocabulary:
         d = edit_distance(word, term)
@@ -362,13 +342,10 @@ def spell_correct(word, vocabulary, max_dist=2):
 
 
 def soundex(name):
-    """Compute Soundex phonetic code."""
     name = name.upper()
     if not name:
         return ""
     code = name[0]
-    table = str.maketrans('AEHIOUWYБВГДЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ',
-                           '00000000000000000000000000000000000000')
     soundex_map = {
         'B': '1', 'F': '1', 'P': '1', 'V': '1',
         'C': '2', 'G': '2', 'J': '2', 'K': '2', 'Q': '2', 'S': '2', 'X': '2', 'Z': '2',
@@ -389,13 +366,12 @@ def soundex(name):
 
 
 def phonetic_search(query_word, vocabulary):
-    """Return vocabulary terms with same Soundex code."""
     target = soundex(query_word)
     return sorted([t for t in vocabulary if soundex(t) == target])
 
 
 # ─────────────────────────────────────────────────────────
-# Stemming vs Lemmatization comparison (cosine similarity)
+# Stemming vs Lemmatization comparison
 # ─────────────────────────────────────────────────────────
 
 def build_tf_vector(tokens, vocab):
@@ -417,7 +393,6 @@ def cosine_similarity(v1, v2):
 
 
 def compare_stem_lemma(docs):
-    """Compare average pairwise cosine similarity of stemmed vs lemmatized docs."""
     stemmed_docs = []
     lemma_docs = []
     for doc in docs:
@@ -445,13 +420,13 @@ def compare_stem_lemma(docs):
         "lemmatized_vocab_size": len(lemma_vocab),
         "stem_avg_similarity": round(stem_sim, 4),
         "lemma_avg_similarity": round(lemma_sim, 4),
-        "stemmed_samples": [(d[:5]) for d in stemmed_docs],
-        "lemma_samples": [(d[:5]) for d in lemma_docs],
+        "stemmed_samples": [d[:5] for d in stemmed_docs],
+        "lemma_samples": [d[:5] for d in lemma_docs],
     }
 
 
 # ─────────────────────────────────────────────────────────
-# Session state helpers
+# Session helpers
 # ─────────────────────────────────────────────────────────
 
 def get_docs():
@@ -467,19 +442,26 @@ def get_doc_names():
 # ─────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="IR System - Group 83", layout="wide")
-st.title("🔍 Information Retrieval System")
-st.caption("BITS Pilani | AIMLCZG537/DSECLZG537 | Assignment 1 | Group 83")
+st.title("Information Retrieval System - Group 83")
+
+st.markdown("""
+**Authors**
+
+RAHUL KHANNA D - 2025AB05245
+
+SUKRIT SARKAR - 2025AB05235
+""")
 
 tabs = st.tabs([
-    "📂 A. Upload & View",
-    "🔤 B. Preprocessing",
-    "🔎 C. Phrase Query",
-    "🌳 D. Dictionary Search",
-    "🛡️ E. Tolerant Retrieval",
-    "📊 G. Inference",
+    "A. Upload & View",
+    "B. Preprocessing",
+    "C. Phrase Query",
+    "D. Dictionary Search",
+    "E. Tolerant Retrieval",
+    "G. Inference",
 ])
 
-# ─── TAB A: Upload & View ────────────────────────────────
+# ─── TAB A ───────────────────────────────────────────────
 with tabs[0]:
     st.header("A. Document Upload & Viewing")
     st.write("Upload `.txt` files or paste text below to build your document collection.")
@@ -509,8 +491,7 @@ with tabs[0]:
             st.session_state["doc_names"] = [f"Doc {i+1}" for i in range(len(lines))]
             st.success(f"Loaded {len(lines)} document(s).")
 
-    # Sample dataset button
-    if st.button("📚 Load Sample Dataset"):
+    if st.button("Load Sample Dataset"):
         sample = [
             "The quick brown fox jumps over the lazy dog near the river bank.",
             "Information retrieval systems retrieve relevant documents from large collections.",
@@ -548,7 +529,6 @@ with tabs[0]:
                 st.text(doc[:300] + ("..." if len(doc) > 300 else ""))
                 st.divider()
 
-        # Basic stats
         st.subheader("Collection Statistics")
         all_tokens = []
         for d in docs:
@@ -565,17 +545,16 @@ with tabs[0]:
         st.info("Please upload documents or load the sample dataset to proceed.")
 
 
-# ─── TAB B: Preprocessing ────────────────────────────────
+# ─── TAB B ───────────────────────────────────────────────
 with tabs[1]:
     st.header("B. Text Preprocessing")
     docs = get_docs()
 
     if not docs:
-        st.warning("⚠️ Please upload documents in Tab A first.")
+        st.warning("Please upload documents in Tab A first.")
     else:
         st.subheader("Preprocessing Pipeline Demo")
 
-        # Options
         col1, col2 = st.columns(2)
         with col1:
             do_lower = st.checkbox("Lowercasing", value=True)
@@ -620,13 +599,12 @@ with tabs[1]:
                 rows = [{"Doc ID": doc_id, "Doc Name": get_doc_names()[doc_id],
                          "Positions": str(positions)}
                         for doc_id, positions in postings.items()]
-                st.success(f"Term **'{key}'** found in {len(postings)} document(s):")
+                st.success(f"Term '{key}' found in {len(postings)} document(s):")
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
             else:
                 st.error(f"Term '{key}' not found in the index.")
 
         st.subheader("Stemming vs. Lemmatization Comparison")
-
         results = compare_stem_lemma(docs)
 
         col1, col2 = st.columns(2)
@@ -644,7 +622,6 @@ with tabs[1]:
             st.write("**Sample lemmatized tokens (Doc 1):**")
             st.code(str(results["lemma_samples"][0]))
 
-        # Comparison table for multiple docs
         rows = []
         for i, doc in enumerate(docs):
             s_tok, _ = preprocess(doc, stem=True)
@@ -668,7 +645,7 @@ with tabs[1]:
             winner = "**Lemmatization**"
             reason = (f"Lemmatization achieves higher average cosine similarity ({lemma_sim}) "
                       f"vs stemming ({stem_sim}), indicating better semantic grouping of terms. "
-                      f"Lemmatization also preserves valid dictionary words, making results more "
+                      f"Lemmatization preserves valid dictionary words, making results more "
                       f"interpretable. The vocabulary size ({lemma_vocab}) is larger than stemming "
                       f"({stem_vocab}), reflecting more meaningful term distinctions.")
         else:
@@ -678,19 +655,18 @@ with tabs[1]:
                       f"terms on this dataset. The reduced vocabulary size ({stem_vocab} vs "
                       f"{lemma_vocab}) helps cluster similar documents more effectively.")
 
-        st.success(f"✅ **Conclusion:** {winner} is more suitable for this dataset.\n\n{reason}")
+        st.success(f"Conclusion: {winner} is more suitable for this dataset. {reason}")
 
 
-# ─── TAB C: Phrase Query ─────────────────────────────────
+# ─── TAB C ───────────────────────────────────────────────
 with tabs[2]:
     st.header("C. Phrase Query Processing")
     docs = get_docs()
 
     if not docs:
-        st.warning("⚠️ Please upload documents in Tab A first.")
+        st.warning("Please upload documents in Tab A first.")
     else:
-        # Build indexes (cache in session state)
-        if "biword_index" not in st.session_state or st.button("🔄 Rebuild Indexes"):
+        if "biword_index" not in st.session_state or st.button("Rebuild Indexes"):
             with st.spinner("Building indexes..."):
                 st.session_state["biword_index"] = build_biword_index(docs)
                 st.session_state["pos_index"] = build_positional_index(docs)
@@ -715,7 +691,7 @@ with tabs[2]:
             pi_df = pd.DataFrame([
                 {"Term": term,
                  "Doc IDs": str(list(postings.keys())[:3]),
-                 "Positions (Doc 0)": str(list(postings.values())[0][:5]) if postings else ""}
+                 "Positions (first doc)": str(list(postings.values())[0][:5]) if postings else ""}
                 for term, postings in sample_terms
             ])
             st.dataframe(pi_df, use_container_width=True)
@@ -734,7 +710,7 @@ with tabs[2]:
 
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown("### 🔵 Biword Index Results")
+                st.markdown("### Biword Index Results")
                 st.metric("Documents found", len(bw_results))
                 st.metric("Query time", f"{bw_time:.3f} ms")
                 if bw_results:
@@ -745,7 +721,7 @@ with tabs[2]:
                     st.info("No results.")
 
             with col2:
-                st.markdown("### 🟢 Positional Index Results")
+                st.markdown("### Positional Index Results")
                 st.metric("Documents found", len(pos_results))
                 st.metric("Query time", f"{pos_time:.3f} ms")
                 if pos_results:
@@ -755,20 +731,18 @@ with tabs[2]:
                 else:
                     st.info("No results.")
 
-            # False positive analysis
             false_positives = [d for d in bw_results if d not in pos_results]
             st.subheader("Analysis: False Positives in Biword Index")
             if false_positives:
                 st.warning(
-                    f"⚠️ Biword index returned {len(false_positives)} false positive(s): "
+                    f"Biword index returned {len(false_positives)} false positive(s): "
                     f"Doc IDs {false_positives}. These documents contain adjacent biword pairs "
                     f"but not the exact phrase."
                 )
                 for fp in false_positives:
                     st.text(f"[{fp}] {docs[fp][:200]}")
             else:
-                st.success("✅ No false positives for this query. "
-                           "Both indexes agree on results.")
+                st.success("No false positives for this query. Both indexes agree on results.")
 
         st.subheader("Comparison: Biword vs Positional Index")
         st.table(pd.DataFrame([
@@ -796,22 +770,21 @@ with tabs[2]:
 
         st.info(
             "**Inference:** Positional index provides more accurate phrase query results because "
-            "it verifies that query terms appear in consecutive positions within a document. "
+            "it verifies that query terms appear at consecutive positions within a document. "
             "Biword index is faster but may match documents where the biwords appear "
             "in different parts of the text, not as a contiguous phrase."
         )
 
 
-# ─── TAB D: Dictionary Search ────────────────────────────
+# ─── TAB D ───────────────────────────────────────────────
 with tabs[3]:
     st.header("D. Dictionary Search: BST vs B-Tree")
     docs = get_docs()
 
     if not docs:
-        st.warning("⚠️ Please upload documents in Tab A first.")
+        st.warning("Please upload documents in Tab A first.")
     else:
-        # Build trees
-        if "bst" not in st.session_state or st.button("🔄 Rebuild Trees"):
+        if "bst" not in st.session_state or st.button("Rebuild Trees"):
             with st.spinner("Building BST and B-Tree..."):
                 all_tokens = []
                 for d in docs:
@@ -821,8 +794,13 @@ with tabs[3]:
 
                 bst = BST()
                 btree = BTree(t=3)
-                for term in vocab:
+
+                # Shuffle vocab before BST insertion to avoid a fully skewed tree
+                shuffled = vocab[:]
+                random.shuffle(shuffled)
+                for term in shuffled:
                     bst.insert(term)
+                for term in vocab:
                     btree.insert(term)
 
                 st.session_state["bst"] = bst
@@ -859,18 +837,17 @@ with tabs[3]:
 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.markdown("### 🔵 Binary Search Tree")
-                    st.metric("Found", "✅ Yes" if bst_found else "❌ No")
-                    st.metric("Time (µs)", f"{bst_time:.2f}")
+                    st.markdown("### Binary Search Tree")
+                    st.metric("Found", "Yes" if bst_found else "No")
+                    st.metric("Time (us)", f"{bst_time:.2f}")
                     st.metric("Comparisons", bst_comps)
 
                 with col2:
-                    st.markdown("### 🟢 B-Tree (t=3)")
-                    st.metric("Found", "✅ Yes" if bt_found else "❌ No")
-                    st.metric("Time (µs)", f"{bt_time:.2f}")
+                    st.markdown("### B-Tree (t=3)")
+                    st.metric("Found", "Yes" if bt_found else "No")
+                    st.metric("Time (us)", f"{bt_time:.2f}")
                     st.metric("Comparisons", bt_comps)
 
-            # Benchmark: run multiple queries
             st.subheader("Experimental Results: Multiple Query Benchmark")
 
             test_terms = random.sample(vocab, min(10, len(vocab))) + \
@@ -891,18 +868,18 @@ with tabs[3]:
                 rows.append({
                     "Query Term": term,
                     "BST Found": bst.search(term),
-                    "BST Time (µs)": round(bst_t, 3),
+                    "BST Time (us)": round(bst_t, 3),
                     "BST Comparisons": bc,
                     "B-Tree Found": btree.search(term),
-                    "B-Tree Time (µs)": round(bt_t, 3),
+                    "B-Tree Time (us)": round(bt_t, 3),
                     "B-Tree Comparisons": btc,
                 })
 
             df = pd.DataFrame(rows)
             st.dataframe(df, use_container_width=True)
 
-            avg_bst_time = df["BST Time (µs)"].mean()
-            avg_bt_time = df["B-Tree Time (µs)"].mean()
+            avg_bst_time = df["BST Time (us)"].mean()
+            avg_bt_time = df["B-Tree Time (us)"].mean()
             avg_bst_comps = df["BST Comparisons"].mean()
             avg_bt_comps = df["B-Tree Comparisons"].mean()
 
@@ -910,38 +887,37 @@ with tabs[3]:
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("**BST Averages**")
-                st.metric("Avg Time (µs)", round(avg_bst_time, 3))
+                st.metric("Avg Time (us)", round(avg_bst_time, 3))
                 st.metric("Avg Comparisons", round(avg_bst_comps, 1))
 
             with col2:
                 st.markdown("**B-Tree Averages**")
-                st.metric("Avg Time (µs)", round(avg_bt_time, 3))
+                st.metric("Avg Time (us)", round(avg_bt_time, 3))
                 st.metric("Avg Comparisons", round(avg_bt_comps, 1))
 
             st.subheader("Inference: BST vs B-Tree")
             st.info(
-                "**Binary Search Tree (BST):** O(log n) average search time, but degrades to "
-                "O(n) in worst case (sorted insertion). Well-suited for in-memory dictionary "
-                "lookups on small to medium collections.\n\n"
-                "**B-Tree:** Maintains O(log n) search in all cases with guaranteed balance. "
-                "Each node holds multiple keys, reducing tree height and improving cache locality. "
-                "B-Trees are preferred for large dictionaries and disk-based storage because "
-                "fewer node accesses are needed.\n\n"
+                "**Binary Search Tree (BST):** O(log n) average search time, but can degrade "
+                "on skewed distributions. Insertion order was randomized here to avoid worst case. "
+                "Well-suited for in-memory dictionary lookups on small to medium collections.\n\n"
+                "**B-Tree (t=3):** Maintains O(log n) search in all cases with guaranteed balance. "
+                "Each node holds multiple keys (up to 5 for t=3), reducing tree height and improving "
+                "cache locality. B-Trees are preferred for large dictionaries and disk-based storage "
+                "because fewer node accesses are needed.\n\n"
                 f"On this dataset (vocab size={len(vocab)}), "
-                + ("B-Tree outperforms BST in comparisons, consistent with its design for "
-                   "efficient multi-key node lookups."
+                + ("B-Tree requires fewer comparisons per query, consistent with its multi-key design."
                    if avg_bt_comps <= avg_bst_comps
-                   else "BST shows competitive performance for this small in-memory collection.")
+                   else "BST shows competitive performance for this in-memory collection.")
             )
 
 
-# ─── TAB E: Tolerant Retrieval ───────────────────────────
+# ─── TAB E ───────────────────────────────────────────────
 with tabs[4]:
     st.header("E. Tolerant Retrieval")
     docs = get_docs()
 
     if not docs:
-        st.warning("⚠️ Please upload documents in Tab A first.")
+        st.warning("Please upload documents in Tab A first.")
     else:
         all_tokens = []
         for d in docs:
@@ -956,7 +932,8 @@ with tabs[4]:
 
         tolerant_mode = st.radio(
             "Select tolerant retrieval mode:",
-            ["Wildcard Query (K-gram)", "Spelling Correction (Edit Distance)", "Phonetic Correction (Soundex)"],
+            ["Wildcard Query (K-gram)", "Spelling Correction (Edit Distance)",
+             "Phonetic Correction (Soundex)"],
             horizontal=True,
         )
 
@@ -964,7 +941,7 @@ with tabs[4]:
             st.subheader("Wildcard Query using K-gram Index")
             st.write(f"K-gram index built with **{len(kgram_idx)}** 2-grams over {len(vocabulary)} terms.")
 
-            wq = st.text_input("Enter wildcard query (use * as wildcard):", placeholder="e.g. ret*iev*")
+            wq = st.text_input("Enter wildcard query (use * as wildcard):", placeholder="e.g. ret*")
             if wq:
                 t0 = time.perf_counter()
                 matches = wildcard_search(wq, kgram_idx, vocabulary)
@@ -976,7 +953,6 @@ with tabs[4]:
                     st.success("Matching vocabulary terms:")
                     st.write(", ".join(matches))
 
-                    # Now find documents containing these terms
                     inv_idx = build_inverted_index(docs)
                     matching_docs = set()
                     for m in matches:
@@ -994,7 +970,7 @@ with tabs[4]:
             st.info(
                 "A K-gram index maps every k-character substring of vocabulary terms "
                 "(padded with $ sentinels) to the set of terms containing that substring. "
-                "For a wildcard query like `ret*`, we extract k-grams from the pattern parts, "
+                "For a wildcard query like 'ret*', we extract k-grams from the non-wildcard parts, "
                 "intersect the candidate sets, then post-filter with regex to eliminate false positives."
             )
 
@@ -1016,9 +992,8 @@ with tabs[4]:
                     st.dataframe(df, use_container_width=True)
 
                     best = candidates[0][0]
-                    st.success(f"Best correction: **{best}** (distance={candidates[0][1]})")
+                    st.success(f"Best correction: {best} (distance={candidates[0][1]})")
 
-                    # Retrieve docs for best candidate
                     inv_idx = build_inverted_index(docs)
                     if best in inv_idx:
                         st.write(f"Documents containing '{best}':")
@@ -1038,7 +1013,7 @@ with tabs[4]:
                 d = edit_distance(w1, w2)
                 st.metric(f"Edit distance between '{w1}' and '{w2}'", d)
 
-        else:  # Phonetic
+        else:
             st.subheader("Phonetic Correction using Soundex")
             phonetic_query = st.text_input("Enter query word for phonetic matching:",
                                            placeholder="e.g. smith")
@@ -1068,7 +1043,7 @@ with tabs[4]:
             st.dataframe(snd_df, use_container_width=True)
 
 
-# ─── TAB G: Inference & Discussion ───────────────────────
+# ─── TAB G ───────────────────────────────────────────────
 with tabs[5]:
     st.header("G. Inference and Discussion")
 
@@ -1099,54 +1074,53 @@ with tabs[5]:
         ),
         "2. Was stemming or lemmatization better for this dataset?": (
             "**Lemmatization** is generally more suitable for this dataset. "
-            "It produces valid dictionary words (e.g., 'running' → 'run') vs. stemming's "
-            "truncated roots (e.g., 'running' → 'run', 'studies' → 'studi'). "
+            "It produces valid dictionary words (e.g., 'running' to 'run') vs. stemming's "
+            "truncated roots (e.g., 'studies' to 'studi'). "
             "The higher cosine similarity score under lemmatization indicates better "
             "semantic grouping, and results are more interpretable for end users. "
-            "Stemming trades precision for recall—useful when coverage matters more than readability."
+            "Stemming trades precision for recall — useful when coverage matters more than readability."
         ),
         "3. Which phrase query index was more accurate?": (
             "**Positional Index** is more accurate. "
             "It verifies that query terms appear at consecutive positions within a document, "
             "eliminating false positives that the biword index may return. "
             "The biword index is faster (simple set intersection) but cannot distinguish "
-            "'quick brown' at positions 2,3 from 'quick...brown' with intervening words "
-            "when multiple biwords coincidentally match."
+            "whether two adjacent biwords form a contiguous phrase or appear separately."
         ),
         "4. Which tree structure was faster?": (
             "**B-Tree** exhibits more consistent O(log_t n) performance. "
-            "Each B-Tree node stores multiple keys (2t-1 max), meaning fewer node accesses "
+            "Each B-Tree node stores multiple keys (up to 2t-1), meaning fewer node accesses "
             "are needed for large vocabularies. BST is competitive for in-memory small "
-            "dictionaries but can degrade on skewed distributions. "
+            "dictionaries with randomized insertion but can degrade on sorted input. "
             "For disk-based IR systems, B-Trees are standard because they minimize I/O operations."
         ),
         "5. How tolerant was the retrieval model?": (
             "The tolerant retrieval module handles three classes of imperfect queries:\n"
             "- **Wildcard queries** via k-gram index (2-gram): supports prefix (ret*), "
-            "suffix (*al), and infix wildcards.\n"
+            "suffix (*al), and infix wildcards with regex post-filtering.\n"
             "- **Spelling correction** via Levenshtein edit distance: corrects up to d=2 "
             "typos, effective for common transpositions and substitutions.\n"
             "- **Phonetic correction** via Soundex: matches homophones and near-homophones, "
-            "useful when users spell phonetically (e.g., 'retreival' → 'retrieval')."
+            "useful when users spell phonetically."
         ),
         "6. What are the limitations of this system?": (
             "- **Scale**: All indexes are in-memory; large corpora would require disk-based structures.\n"
-            "- **BST imbalance**: Without self-balancing (AVL/Red-Black), BST can degrade to O(n) "
-            "on sorted inputs.\n"
+            "- **BST imbalance**: Without self-balancing (AVL or Red-Black), BST can degrade to O(n) "
+            "on sorted inputs (mitigated here by random insertion order).\n"
             "- **Biword false positives**: Cannot be entirely eliminated without position verification.\n"
-            "- **Soundex limitations**: Collapses distinct sounds (e.g., S and Z → '2'); "
-            "Metaphone or Double Metaphone would be more accurate.\n"
+            "- **Soundex limitations**: Collapses distinct sounds; Metaphone or Double Metaphone "
+            "would be more accurate.\n"
             "- **No ranking**: The system returns unranked result sets. TF-IDF or BM25 ranking "
             "would improve result quality significantly."
         ),
         "7. How can the system be improved?": (
             "- **Ranking**: Implement TF-IDF or BM25 scoring for ranked retrieval.\n"
             "- **Balanced BST**: Use AVL tree or Red-Black tree to guarantee O(log n) worst case.\n"
-            "- **Permuterm index**: Combine with biword index to eliminate all wildcard false positives.\n"
-            "- **Context-aware lemmatization**: Use POS tagging to select correct lemma form.\n"
-            "- **Neural IR**: Integrate dense retrieval (e.g., sentence-transformers) for "
+            "- **Permuterm index**: Combine with biword index to eliminate wildcard false positives.\n"
+            "- **Context-aware lemmatization**: Use POS tagging to select the correct lemma form.\n"
+            "- **Neural IR**: Integrate dense retrieval (sentence-transformers) for "
             "semantic similarity beyond keyword matching.\n"
-            "- **Disk persistence**: Serialize indexes to disk (e.g., SQLite or file-based inverted index) "
+            "- **Disk persistence**: Serialize indexes to disk (SQLite or file-based inverted index) "
             "to handle large document collections."
         ),
     }
@@ -1172,12 +1146,12 @@ Preprocessing Pipeline
   └─ Lemmatization (WordNet)
 
 Indexing Layer
-  ├─ Inverted Index (term → doc_id → positions)
-  ├─ Biword Index (bigram → doc_ids)
-  ├─ Positional Index (term → doc_id → positions)
+  ├─ Inverted Index (term -> doc_id -> positions)
+  ├─ Biword Index (bigram -> doc_ids)
+  ├─ Positional Index (term -> doc_id -> positions)
   ├─ Binary Search Tree (in-memory dictionary)
   ├─ B-Tree (t=3, multi-key nodes)
-  └─ K-gram Index (2-gram → vocabulary terms)
+  └─ K-gram Index (2-gram -> vocabulary terms)
 
 Query Processing
   ├─ Exact Keyword Lookup
@@ -1191,4 +1165,4 @@ Output Layer
   └─ Streamlit Front-end (results, tables, metrics)
 """, language="text")
 
-    st.caption("Group 83 | BITS Pilani WILPD | IR Assignment 1 | 2025-26 S2")
+    st.caption("Group 83 | RAHUL KHANNA D (2025AB05245) | SUKRIT SARKAR (2025AB05235)")
