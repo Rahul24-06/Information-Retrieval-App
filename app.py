@@ -285,19 +285,23 @@ def build_kgram_index(vocabulary, k=2):
 
 
 def wildcard_search(pattern, kgram_index, vocabulary, k=2):
+    # Split on '*'; index 0 is the prefix part, index -1 is the suffix part
     parts = pattern.split('*')
-    parts = [p for p in parts if p]
 
-    if not parts:
+    if not any(parts):  # pattern is all wildcards
         return list(vocabulary)
 
     candidate_sets = []
-    for part in parts:
-        padded = part
-        if pattern.startswith(part):
-            padded = '$' + part
-        if pattern.endswith(part):
-            padded = part + '$'
+    n_parts = len(parts)
+
+    for idx, part in enumerate(parts):
+        if not part:
+            continue
+
+        is_first = (idx == 0)          # anchored to start of term
+        is_last = (idx == n_parts - 1)  # anchored to end of term
+
+        padded = ('$' if is_first else '') + part + ('$' if is_last else '')
 
         grams = set()
         for i in range(len(padded) - k + 1):
@@ -305,13 +309,16 @@ def wildcard_search(pattern, kgram_index, vocabulary, k=2):
 
         if grams:
             sets = [kgram_index.get(g, set()) for g in grams]
-            candidate_sets.append(set.intersection(*sets) if sets else set())
+            candidate_sets.append(set.intersection(*sets))
 
     if not candidate_sets:
         return []
 
     candidates = set.intersection(*candidate_sets)
-    regex = re.compile('^' + pattern.replace('*', '.*') + '$')
+
+    # Post-filter with regex to eliminate false positives
+    escaped_parts = [re.escape(p) for p in parts]
+    regex = re.compile('^' + '.*'.join(escaped_parts) + '$')
     return sorted([t for t in candidates if regex.match(t)])
 
 
