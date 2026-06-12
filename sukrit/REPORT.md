@@ -82,7 +82,7 @@ All functionality is integrated into a single Streamlit application (`app.py`) w
 
 | Tab | Function |
 |-----|----------|
-| A | Document upload, project dataset loader, sample dataset, document viewer |
+| A | Document upload, project dataset loader, document viewer |
 | B | Text preprocessing pipeline, inverted index lookup, preprocessing experiments |
 | C | Unified query interface with preprocessing options and retrieval technique selection |
 | D | Phrase query processing (biword vs positional index) |
@@ -165,13 +165,6 @@ Eight news-style text documents loaded from the `dataset/` folder:
 | Vocabulary size | 511 |
 | Avg tokens/doc | 355.9 |
 
-### 3.2 Extended Sample Dataset
-
-An 18-document built-in sample is also provided for phrase-query demonstrations. It includes:
-
-- A **false-positive demo document** (doc 15): *"The quick brown hat was on the table. Later, a brown fox ran across the field."*
-- Hyphenated terms: `anti-spyware`, `e-mail`
-
 ---
 
 ## 4. System Architecture
@@ -251,20 +244,17 @@ All experiments below were run on the **8-document project dataset** unless othe
 
 ### 5.3 Phrase Query: Biword vs. Positional Index
 
-**Dataset:** 18-document sample (includes false-positive demo document)  
-**Query:** `quick brown fox`
+**Dataset:** 8-document project dataset  
+**Query:** `microsoft investigating`
 
 | Index Type | Documents Found | Doc IDs | Query Time |
 |------------|----------------|---------|------------|
-| Biword Index | 2 | [0, 15] | ~0.5 ms |
-| Positional Index | 1 | [0] | ~0.8 ms |
+| Biword Index | 1 | [2] | ~0.5 ms |
+| Positional Index | 1 | [2] | ~0.8 ms |
 
-**False positive analysis:**
+On this dataset, both indexes returned the same result for exact phrases present in the collection (e.g. doc 003: *"Microsoft is investigating a trojan program..."*).
 
-| Doc ID | Document Snippet | Biword Match? | Positional Match? | Reason |
-|--------|-----------------|---------------|-------------------|--------|
-| 0 | "The quick brown fox jumps over..." | Yes | Yes | Exact contiguous phrase |
-| 15 | "The quick brown hat... Later, a brown fox ran..." | Yes | **No** | Has `quick brown` and `brown fox` as separate biwords, but not as one contiguous phrase |
+**Biword false positives (general case):** The biword index can return extra documents when overlapping bigrams appear in different parts of a document but not as one contiguous phrase. The positional index avoids this by requiring consecutive term positions. Tab D highlights any false positives automatically when biword and positional results differ.
 
 **Why positional index is more accurate:** The positional index verifies that query terms appear at consecutive positions (pos, pos+1, pos+2). The biword index only checks that adjacent pairs exist somewhere in the document, which allows false matches when biwords appear in different parts of the text.
 
@@ -371,7 +361,7 @@ All experiments below were run on the **8-document project dataset** unless othe
 
 **[INSERT SCREENSHOT HERE]**
 
-*Caption: Phrase query `quick brown fox` — biword returns 2 documents, positional returns 1. False positive doc 15 highlighted.*
+*Caption: Phrase query `microsoft investigating` — biword vs positional comparison on the project dataset.*
 
 ---
 
@@ -444,18 +434,14 @@ The full pipeline (lowercasing + stop word removal + hyphen handling) is recomme
 
 **Answer: The Positional Index** was more accurate than the Biword Index.
 
-**Evidence:** For the phrase query `quick brown fox` on the 18-document sample:
+**Evidence:** For phrase queries on the project dataset (e.g. `microsoft investigating`, `trojan program`), both indexes typically agree when the phrase appears contiguously in a document. The positional index is still more accurate in general because it verifies consecutive term positions.
 
-| Index | Results | Accuracy |
-|-------|---------|----------|
-| Biword Index | Docs [0, 15] | 1 false positive |
-| Positional Index | Doc [0] | Exact match only |
+| Index | Behavior | Accuracy |
+|-------|----------|----------|
+| Biword Index | Intersects adjacent bigram postings | May false-match when bigrams appear in separate parts of a document |
+| Positional Index | Checks consecutive positions | Exact phrase match only |
 
-**False positive case (Doc 15):**
-> *"The quick brown hat was on the table. Later, a brown fox ran across the field."*
-
-- **Biword index** matched because the document contains both biwords `quick brown` (positions 1–2) and `brown fox` (positions 12–13), but these are **not consecutive** as a three-word phrase.
-- **Positional index** correctly rejected this document because there is no position `p` where `quick` is at `p`, `brown` at `p+1`, and `fox` at `p+2`.
+**Example (conceptual false positive):** A document containing *"...quick brown hat... later... brown fox..."* would match biword query `quick brown fox` but not positional query, because `quick`, `brown`, and `fox` are not at consecutive positions.
 
 **Why positional index is more accurate:** It enforces that all query terms appear at strictly consecutive positions within a document. The biword index decomposes a phrase into overlapping bigrams and intersects document sets, which cannot distinguish between contiguous and non-contiguous occurrences of those bigrams.
 
@@ -517,7 +503,7 @@ The full pipeline (lowercasing + stop word removal + hyphen handling) is recomme
 
 3. **BST imbalance risk** — The BST is not self-balancing (no AVL or Red-Black tree). While randomized insertion mitigates worst-case O(n) degradation, sorted input would produce a skewed tree.
 
-4. **Biword false positives** — The biword index cannot guarantee exact phrase matching for queries with three or more terms, as demonstrated with doc 15.
+4. **Biword false positives** — The biword index cannot guarantee exact phrase matching for queries with three or more terms when bigrams appear in non-contiguous parts of a document.
 
 5. **Coarse phonetic matching** — Soundex collapses many distinct words into the same code (e.g., `microsoft` and `makers` both map to M262), producing irrelevant matches.
 

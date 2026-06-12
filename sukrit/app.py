@@ -53,8 +53,6 @@ STEM_LEMMA_QUERIES = [
     "running", "studies", "retrieval", "investigating", "systems",
 ]
 
-FALSE_POSITIVE_DEMO_QUERY = "quick brown fox"
-
 # ─────────────────────────────────────────────────────────
 # Preprocessing
 # ─────────────────────────────────────────────────────────
@@ -379,6 +377,10 @@ def wildcard_search(pattern, kgram_index, vocabulary, k=2):
     return sorted(t for t in candidates if regex.match(t))
 
 
+def lookup_kgram(gram, kgram_index):
+    return sorted(kgram_index.get(gram.lower(), set()))
+
+
 def edit_distance(s1, s2):
     m, n = len(s1), len(s2)
     dp = list(range(n + 1))
@@ -623,31 +625,6 @@ def load_project_dataset():
     return docs, names
 
 
-def get_sample_dataset():
-    sample = [
-        "The quick brown fox jumps over the lazy dog near the river bank.",
-        "Information retrieval systems retrieve relevant documents from large collections.",
-        "Natural language processing enables computers to understand human language.",
-        "The fox is a cunning animal that lives in forests and fields.",
-        "Machine learning algorithms improve automatically through experience and data.",
-        "Retrieval systems use indexing to speed up document search and query processing.",
-        "The brown dog quickly ran and jumped over the lazy sleeping fox.",
-        "Deep learning neural networks have revolutionized natural language understanding.",
-        "Binary search trees and B-trees are efficient data structures for dictionary lookup.",
-        "Stemming and lemmatization are text normalization techniques used in IR systems.",
-        "Wildcard queries allow flexible pattern matching in information retrieval.",
-        "Positional indexes store term positions enabling exact phrase query matching.",
-        "Spelling correction uses edit distance to handle typographic errors in queries.",
-        "The lazy cat sat on the mat near the old brown wooden fence.",
-        "K-gram indexes support efficient wildcard and approximate string matching operations.",
-        # Designed to trigger biword false positives for "quick brown fox"
-        "The quick brown hat was on the table. Later, a brown fox ran across the field.",
-        "Anti-spyware and e-mail filtering are common in modern security software.",
-    ]
-    names = [f"doc_{i + 1}.txt" for i in range(len(sample))]
-    return sample, names
-
-
 def set_documents(docs, names):
     st.session_state["docs"] = docs
     st.session_state["doc_names"] = names
@@ -712,8 +689,8 @@ def store_experiments(**kwargs):
 # Streamlit UI
 # ─────────────────────────────────────────────────────────
 
-st.set_page_config(page_title="IR System - Assignment 2 - Group 83", layout="wide")
-st.title("Information Retrieval System — Assignment 2")
+st.set_page_config(page_title="IR System - Assignment 1 - Group 83", layout="wide")
+st.title("Information Retrieval System — Assignment 1")
 st.caption("Group 83 | RAHUL KHANNA D (2025AB05245) | SUKRIT SARKAR (2025AB05235)")
 
 tabs = st.tabs([
@@ -729,7 +706,7 @@ tabs = st.tabs([
 # ─── TAB A ───────────────────────────────────────────────
 with tabs[0]:
     st.header("A. Document Upload & Viewing")
-    st.write("Upload `.txt` files, load the project dataset, or use the built-in sample collection.")
+    st.write("Upload `.txt` files or load the project dataset from the `dataset/` folder.")
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -758,11 +735,6 @@ with tabs[0]:
             else:
                 st.error("No files found in dataset/ folder.")
 
-        if st.button("Load Sample Dataset"):
-            docs, names = get_sample_dataset()
-            set_documents(docs, names)
-            st.success(f"Sample dataset loaded ({len(docs)} docs, includes false-positive demo).")
-
     docs = get_docs()
     names = get_doc_names()
 
@@ -790,7 +762,7 @@ with tabs[0]:
         c3.metric("Vocabulary Size", len(vocab))
         c4.metric("Avg Tokens/Doc", round(len(all_tokens) / len(docs), 1))
     else:
-        st.info("Please upload documents or load a dataset to proceed.")
+        st.info("Please upload documents or load the project dataset to proceed.")
 
 
 # ─── TAB B ───────────────────────────────────────────────
@@ -916,7 +888,7 @@ with tabs[2]:
         retrieval_mode = st.selectbox(
             "Retrieval technique",
             ["Boolean AND (Inverted Index)", "Phrase Query (Biword)", "Phrase Query (Positional)",
-             "Wildcard (K-gram)", "Spelling Correction", "Phonetic (Soundex)"],
+             "Wildcard Query", "Spelling Correction", "Phonetic (Soundex)"],
         )
 
         if st.button("Run Query", type="primary") and query:
@@ -944,7 +916,7 @@ with tabs[2]:
                 vocabulary = sorted(set(vocab_tokens))
                 inv_idx = build_inverted_index(docs, cfg)
 
-                if retrieval_mode == "Wildcard (K-gram)":
+                if retrieval_mode == "Wildcard Query":
                     kgram_idx = build_kgram_index(vocabulary)
                     matched_terms = wildcard_search(query, kgram_idx, vocabulary)
                     results = sorted({
@@ -1012,10 +984,7 @@ with tabs[3]:
             ]), use_container_width=True)
 
         st.subheader("Phrase Query Search")
-        if st.button(f"Run False-Positive Demo ({FALSE_POSITIVE_DEMO_QUERY})"):
-            st.session_state["phrase_query"] = FALSE_POSITIVE_DEMO_QUERY
-        query = st.text_input("Enter phrase query:", value=st.session_state.get("phrase_query", ""),
-                              placeholder="e.g. quick brown fox")
+        query = st.text_input("Enter phrase query:", placeholder="e.g. microsoft investigating")
 
         if query:
             t0 = time.perf_counter()
@@ -1187,23 +1156,68 @@ with tabs[5]:
 
         mode = st.radio(
             "Tolerant retrieval mode",
-            ["Wildcard (K-gram)", "Spelling Correction (Edit Distance)", "Phonetic (Soundex)"],
+            ["K-gram Index", "Wildcard Query", "Spelling Correction (Edit Distance)", "Phonetic (Soundex)"],
             horizontal=True,
         )
 
-        if mode == "Wildcard (K-gram)":
-            wq = st.text_input("Wildcard query (use *):", placeholder="e.g. ret*")
+        if mode == "K-gram Index":
+            st.subheader("K-gram Index Representation")
+            st.write(
+                f"Built a **2-gram** index over **{len(vocabulary)}** vocabulary terms "
+                f"with **{len(kgram_idx)}** unique k-grams. Terms are padded with `$` sentinels "
+                f"(e.g. `software` → `$software$`)."
+            )
+
+            sample_rows = []
+            for gram, terms in sorted(kgram_idx.items())[:12]:
+                sample_rows.append({
+                    "K-gram": gram,
+                    "Term Count": len(terms),
+                    "Sample Terms": ", ".join(sorted(terms)[:5]),
+                })
+            st.dataframe(pd.DataFrame(sample_rows), use_container_width=True)
+
+            gram_query = st.text_input("Look up a k-gram:", placeholder="e.g. mi, so, ft")
+            if gram_query:
+                gram = gram_query.strip().lower()
+                matches = lookup_kgram(gram, kgram_idx)
+                st.metric("Vocabulary terms containing k-gram", len(matches))
+                if matches:
+                    st.success(", ".join(matches))
+                    doc_ids = sorted({did for term in matches for did in inv_idx.get(term, {})})
+                    st.write(f"**Documents containing matched terms ({len(doc_ids)}):**")
+                    display_doc_results(doc_ids, docs, get_doc_names())
+                else:
+                    st.warning(f"K-gram '{gram}' not found in the index.")
+
+            term_example = st.text_input("Show k-grams for a term:", placeholder="e.g. software")
+            if term_example:
+                term = term_example.strip().lower()
+                if term in vocabulary:
+                    padded = f"${term}$"
+                    grams = [padded[i:i + 2] for i in range(len(padded) - 1)]
+                    st.write(f"Padded form: `{padded}`")
+                    st.code(str(grams))
+                else:
+                    st.error(f"Term '{term}' not in vocabulary.")
+
+        elif mode == "Wildcard Query":
+            st.subheader("Wildcard Query Search")
+            st.caption("Uses the k-gram index to generate candidates, then filters with regex.")
+            wq = st.text_input("Wildcard query (use *):", placeholder="e.g. soft*")
             if wq:
                 t0 = time.perf_counter()
                 matches = wildcard_search(wq, kgram_idx, vocabulary)
                 elapsed = (time.perf_counter() - t0) * 1000
-                st.metric("Matches", len(matches))
+                st.metric("Matching terms", len(matches))
                 st.metric("Time (ms)", f"{elapsed:.3f}")
                 if matches:
                     st.write(", ".join(matches))
                     doc_ids = sorted({did for m in matches for did in inv_idx.get(m, {})})
                     st.write(f"**Documents ({len(doc_ids)}):**")
                     display_doc_results(doc_ids, docs, get_doc_names())
+                else:
+                    st.warning("No matching terms found.")
 
         elif mode == "Spelling Correction (Edit Distance)":
             misspelled = st.text_input("Misspelled term:", placeholder="e.g. retreival")
@@ -1234,7 +1248,7 @@ with tabs[5]:
                     doc_ids = sorted({did for m in matches for did in inv_idx.get(m, {})})
                     display_doc_results(doc_ids, docs, get_doc_names())
 
-        store_experiments(tolerant_modes=["Wildcard (K-gram)", "Spelling Correction", "Phonetic (Soundex)"])
+        store_experiments(tolerant_modes=["K-gram Index", "Wildcard Query", "Spelling Correction", "Phonetic (Soundex)"])
 
 
 # ─── TAB G ───────────────────────────────────────────────
@@ -1289,9 +1303,9 @@ with tabs[6]:
             f"B-Tree avg comparisons: {tree.get('avg_bt_comps', 'N/A')}."
         ),
         "5. How tolerant was the retrieval model?": (
-            "The system supports wildcard (k-gram + regex), spelling correction (Levenshtein, d≤2), "
+            "The system supports k-gram indexing, wildcard queries, spelling correction (Levenshtein, d≤2), "
             "and phonetic matching (Soundex). Each mode maps imperfect queries to vocabulary terms "
-            "and retrieves documents via the inverted index. Tab F demonstrates all three experimentally."
+            "and retrieves documents via the inverted index. Tab F demonstrates all four experimentally."
         ),
         "6. What are the limitations of this system?": (
             "- In-memory indexes limit scalability.\n"
@@ -1312,14 +1326,3 @@ with tabs[6]:
     for question, answer in inferences.items():
         with st.expander(question, expanded=True):
             st.markdown(answer)
-
-    st.subheader("Architecture Overview")
-    st.code("""
-IR System Architecture (Assignment 2)
-─────────────────────────────────────
-Input: Upload / Project Dataset / Sample
-Preprocessing: Hyphen → Lowercase → Tokenize → Stop removal → Stem/Lemma
-Indexes: Inverted, Biword, Positional, BST, B-Tree, K-gram
-Query: Boolean AND | Phrase | Wildcard | Spelling | Phonetic
-Output: Streamlit tables, metrics, inferences
-""", language="text")
